@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -126,6 +127,7 @@ def main():
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
+    p.add_argument('--json', action='store_true', help='Output context as JSON instead of markdown')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
@@ -177,6 +179,7 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
@@ -184,7 +187,23 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
-    
+
+    # JSON mode — serialize the same data as a structured JSON object
+    if args.json:
+        json_out = {
+            "repo_name": repo_name,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git_info": {
+                "branch": branch,
+                "remote": remote,
+            },
+            "project_structure": tree_out.strip(),
+        }
+        if contents:
+            json_out["file_contents"] = contents
+        output = json.dumps(json_out, indent=2)
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
