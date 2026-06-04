@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -114,6 +115,37 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
             break
     return result
 
+def json_file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
+    files = []
+    total = 0
+    snippet_exts = {'.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.rb',
+                    '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.cs', '.php',
+                    '.vue', '.svelte', '.css', '.scss', '.html', '.xml',
+                    '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
+                    '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
+    for root, dirs, names in os.walk(path):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+        for name in sorted(names):
+            ext = os.path.splitext(name)[1].lower()
+            if name.endswith('.min.js') or name.endswith('.min.css') or ext not in snippet_exts:
+                continue
+            fp = os.path.join(root, name)
+            rel = os.path.relpath(fp, path)
+            try:
+                content = Path(fp).read_text(encoding='utf-8', errors='replace')
+            except Exception:
+                continue
+            remaining = max_total - total
+            if remaining <= 0:
+                return files
+            truncated = len(content) > remaining
+            snippet = content[:remaining]
+            files.append({'path': rel, 'language': ext.lstrip('.'), 'size': os.path.getsize(fp), 'content': snippet, 'truncated': truncated})
+            total += len(snippet)
+            if truncated or total >= max_total:
+                return files
+    return files
+
 def fmt_timestamp(ts):
     try:
         dt = datetime.fromisoformat(ts)
@@ -128,6 +160,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Emit structured JSON instead of markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,6 +169,35 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
+    remote = run(["git", "remote", "get-url", "origin"], target)
+    has_unstaged = run(["git", "diff", "--stat"], target)
+    has_staged = run(["git", "diff", "--cached", "--stat"], target)
+    if args.json:
+        payload = {
+            'repository': repo_name,
+            'generated_at': datetime.now().isoformat(timespec='seconds'),
+            'path': target,
+            'git': {
+                'branch': branch,
+                'remote': remote,
+                'working_tree_clean': not has_unstaged and not has_staged,
+                'unstaged_changes': has_unstaged.splitlines(),
+                'staged_changes': has_staged.splitlines(),
+            },
+            'commits': run(["git", "log", f"--max-count={args.log}", "--pretty=format:%h%x09%s%x09%an%x09%ar"], target).splitlines() if args.log > 0 else [],
+            'branches': [line.strip() for line in run(["git", "branch", "-a"], target).splitlines()],
+            'tree': tree(target, ignored=DEFAULT_IGNORE, depth=args.depth).splitlines(),
+        }
+        if args.files:
+            payload['files'] = json_file_contents(target)
+        output = json.dumps(payload, indent=2)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(output)
+        return
     sections = []
     sections.append(f"# git-context: {repo_name}")
     sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
