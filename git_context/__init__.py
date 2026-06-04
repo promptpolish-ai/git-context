@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of plain text')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -184,7 +186,18 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
-    
+
+    if args.json:
+        json_output = {
+            "repo": repo_name,
+            "path": target,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "branch": branch,
+            "remote": remote,
+            "content": output,
+        }
+        output = json.dumps(json_output, indent=2)
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
