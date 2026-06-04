@@ -1,57 +1,66 @@
-# git-context 🧠
+# git-context
 
-**The fastest way to feed your AI coding assistant full repo context.**
+A simple CLI tool to collect git context (branch, commit, diff, etc.) for AI prompts.
 
-One command → complete project context ready for any LLM:
-- 📁 Project tree (respects .gitignore)
-- 🔀 Git branch topology
-- 📜 Recent commit history
-- 📄 Source file contents (intelligent truncation)
+## Installation
+
+```bash
+pip install git-context
+```
+
+Or install from source:
+
+```bash
+pip install .
+```
 
 ## Usage
 
 ```bash
-# Basic — directory tree + git info
-python3 git-context
-
-# Include file contents for full AI context
-python3 git-context --files
-
-# Custom depth (default: 4)
-python3 git-context --depth 2
-
-# Write to file instead of stdout
-python3 git-context --files -o context.txt
-
-# Any git repo, anywhere
-python3 git-context --dir /path/to/repo
+git-context
 ```
 
-## Why $2?
+This will output something like:
 
-Because it saves you 5+ minutes every time you need to give context to an AI coding assistant. After 2-3 uses, it's paid for itself.
+```
+=== Git Context ===
+Branch: main
+Commit: a1b2c3d4e5f6...
+Message: Fix bug in parser
+Remote: https://github.com/user/repo.git
+Changed files: src/main.py, tests/test_main.py
 
-## Install
+--- Diff ---
+diff --git a/src/main.py b/src/main.py
+...
+```
+
+### JSON Output
+
+Use the `--json` flag to get the output in JSON format:
 
 ```bash
-pip install git-context   # coming to PyPI soon
-# or just download & run — zero dependencies!
+git-context --json
 ```
 
-MIT License
+Example JSON output:
 
----
-
-## ☕ Support
-
-If git-context saves you time, consider buying me a coffee:
-
-**Crypto (ETH / BSC / Polygon):**
+```json
+{
+  "branch": "main",
+  "commit_hash": "a1b2c3d4e5f6...",
+  "commit_message": "Fix bug in parser",
+  "diff": "diff --git a/src/main.py b/src/main.py\n...",
+  "changed_files": ["src/main.py", "tests/test_main.py"],
+  "remote_url": "https://github.com/user/repo.git"
+}
 ```
-0x96ae5ac39ac118361c158c045e6c41dc0c08c533
-```
 
-**Ko-fi:** [https://ko-fi.com/promptpolish](https://ko-fi.com/promptpolish) *(coming soon)*
+## Requirements
 
-**BTC:** `bc1qxlj7xlhp7e6v2qw2k6uy7n3z3q3p3k3z3q3p3`
+- Python 3.7+
+- Git installed and accessible from command line
 
+## License
+
+MIT
