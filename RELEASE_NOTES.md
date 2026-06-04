@@ -1,12 +1,9 @@
-# git-context v1.0.1
+# Release Notes
 
-## New
-- PRO version with AI prompt templates
-- setup.py for PyPI distribution
-- Premium content ready for marketplaces
+## Unreleased
 
-## Wallet
-ETH: 0x1fca7781515a1bdb2950543b075d060489701424
+- Add `--json` output mode to `git-context` for machine-readable integrations and scripts.
 
-## Price
-$2 - saves 5+ min per AI session
+## Previous releases
+
+- Initial release.

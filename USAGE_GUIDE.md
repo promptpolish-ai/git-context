@@ -1,50 +1,53 @@
-# git-context Usage Guide
+# Usage Guide
 
-## Basic Usage
+## Basic usage
+
+Run `git-context` from inside a git repository:
 
 ```bash
-# Show project structure + git info
 git-context
-
-# Full context for AI assistants (includes file contents)
-git-context --files
-
-# Custom depth (default: 4)
-git-context --depth 3
-
-# Output to file
-git-context --files -o ai-context.txt
-
-# Any repo, anywhere
-git-context --dir /path/to/project
 ```
 
-## AI Prompt Templates
+This prints a human-readable summary of the current repository state, including branch, status, recent commits, and diffs.
 
-### For Claude/Codex
-```
-Read this repo context and help me understand the architecture:
-[paste git-context output here]
-```
+## JSON mode
 
-### For ChatGPT/Copilot
-```
-Analyze this codebase and suggest improvements:
-[paste git-context output here]
-```
+For scripts and tooling, use JSON output:
 
-## Examples
-
-### Get context for PR review
 ```bash
-git-context --log 50 --files > pr-context.txt
+git-context --json
 ```
 
-### Quick project overview
+Example shape:
+
+```json
+{
+  "repository": "my-repo",
+  "root": "/path/to/my-repo",
+  "branch": "main",
+  "status": "M README.md",
+  "untracked_files": ["notes.txt"],
+  "staged_diff": "diff --git a/file.txt b/file.txt ...",
+  "unstaged_diff": "diff --git a/README.md b/README.md ...",
+  "recent_commits": [
+    {
+      "hash": "abc123...",
+      "author": "Jane Doe",
+      "date": "2024-01-01 12:00:00 +0000",
+      "subject": "Add feature"
+    }
+  ]
+}
+```
+
+## Limit commits
+
 ```bash
-git-context --depth 2
+git-context --commits 5
 ```
 
-## Support
-ETH: 0x1fca7781515a1bdb2950543b075d060489701424
-GitHub: https://github.com/promptpolish-ai/git-context
+## Combining flags
+
+```bash
+git-context --commits 3 --json
+```
