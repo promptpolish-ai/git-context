@@ -4,7 +4,7 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>] [--json]
 """
 
 import argparse
@@ -185,11 +185,39 @@ def main():
 
     output = "\n".join(sections)
     
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+    if args.json:
+        import json as pyjson
+        # Extract structured data from sections for JSON output
+        js = {
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "status": ("clean" if "clean" in status else "dirty")
+            },
+            "tree": tree_out,
+        }
+        if args.log > 0 and log:
+            js["commits"] = log.split("\n")
+        if branches:
+            js["branches"] = branches.split("\n")
+        if args.files and contents:
+            js["files"] = contents
+        
+        json_out = pyjson.dumps(js, indent=2)
+        if args.output:
+            Path(args.output).write_text(json_out)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(json_out)
     else:
-        print(output)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(output)
 
 if __name__ == '__main__':
     main()
