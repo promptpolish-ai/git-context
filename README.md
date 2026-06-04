@@ -7,6 +7,7 @@ One command → complete project context ready for any LLM:
 - 🔀 Git branch topology
 - 📜 Recent commit history
 - 📄 Source file contents (intelligent truncation)
+- 🧾 Optional structured JSON output
 
 ## Usage
 
@@ -17,15 +18,25 @@ python3 git-context
 # Include file contents for full AI context
 python3 git-context --files
 
+# Machine-readable JSON for tools and automation
+python3 git-context --json
+
+# Include file contents in JSON mode
+python3 git-context --json --files
+
 # Custom depth (default: 4)
 python3 git-context --depth 2
 
 # Write to file instead of stdout
-python3 git-context --files -o context.txt
+python3 git-context --json --files -o context.json
 
 # Any git repo, anywhere
 python3 git-context --dir /path/to/repo
 ```
+
+## JSON fields
+
+`--json` returns a structured object with repository metadata, generated timestamp, git state, recent commits, branches, project structure, and the rendered tree. When `--files` is also passed, it includes source file snippets with language hints and truncation metadata.
 
 ## Why $2?
 
@@ -54,4 +65,3 @@ If git-context saves you time, consider buying me a coffee:
 **Ko-fi:** [https://ko-fi.com/promptpolish](https://ko-fi.com/promptpolish) *(coming soon)*
 
 **BTC:** `bc1qxlj7xlhp7e6v2qw2k6uy7n3z3q3p3k3z3q3p3`
-
