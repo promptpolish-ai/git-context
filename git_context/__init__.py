@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import fnmatch
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -184,6 +186,29 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
+    
+    if args.json:
+        json_data = {
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "has_unstaged_changes": bool(has_unstaged),
+                "has_staged_changes": bool(has_staged),
+            },
+            "tree": tree_out,
+        }
+        if args.log > 0 and log:
+            json_data["recent_commits"] = log
+        if branches:
+            json_data["branches"] = branches
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                json_data["file_contents"] = contents
+        output = json.dumps(json_data, indent=2)
     
     if args.output:
         Path(args.output).write_text(output)
