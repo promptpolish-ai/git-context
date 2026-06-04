@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import fnmatch
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -183,13 +185,42 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+    if args.json:
+        # Build JSON output
+        result = {
+            "repo_name": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "branch": branch,
+            "remote": remote,
+            "working_tree": "clean" if not has_unstaged and not has_staged else "dirty",
+        }
+        if has_unstaged:
+            result["unstaged_changes"] = has_unstaged
+        if has_staged:
+            result["staged_changes"] = has_staged
+        if args.log > 0 and log:
+            result["recent_commits"] = log
+        if branches:
+            result["branches"] = branches
+        if tree_out:
+            result["project_structure"] = tree_out
+        if args.files and contents:
+            result["file_contents"] = contents
+        
+        json_output = json.dumps(result, indent=2)
+        if args.output:
+            Path(args.output).write_text(json_output)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(json_output)
     else:
-        print(output)
+        output = "\n".join(sections)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(output)
 
 if __name__ == '__main__':
     main()
