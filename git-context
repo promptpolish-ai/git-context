@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -125,6 +126,7 @@ def main():
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
+    p.add_argument('--json', action='store_true', help='Write machine-readable JSON output')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
@@ -136,9 +138,10 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+    generated = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     sections = []
     sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    sections.append(f"Generated: {generated}")
     sections.append(f"Path: {target}")
     sections.append("")
 
@@ -177,13 +180,32 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
+    if args.json:
+        output = json.dumps({
+            "repo_name": repo_name,
+            "generated": generated,
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "unstaged_changes": has_unstaged,
+                "staged_changes": has_staged,
+                "working_tree": "dirty" if has_unstaged or has_staged else "clean",
+            },
+            "recent_commits": log if args.log > 0 else "",
+            "branches": branches,
+            "project_structure": tree_out,
+            "file_contents": contents if args.files else "",
+        }, indent=2)
+    else:
+        output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)

@@ -17,6 +17,9 @@ git-context --files -o ai-context.txt
 
 # Any repo, anywhere
 git-context --dir /path/to/project
+
+# Machine-readable output
+git-context --json
 ```
 
 ## AI Prompt Templates
