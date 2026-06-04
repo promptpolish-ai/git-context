@@ -16,6 +16,9 @@ import fnmatch
 from pathlib import Path
 from datetime import datetime
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 DEFAULT_IGNORE = {
     '.git', 'node_modules', '.next', 'dist', 'build', 'target',
     '__pycache__', '.cache', 'venv', '.venv', '.env', 'env',
@@ -221,7 +224,7 @@ def main():
             payload["files"] = json_file_contents(target)
         output = json.dumps(payload, indent=2)
         if args.output:
-            Path(args.output).write_text(output)
+            Path(args.output).write_text(output, encoding="utf-8")
             print(f"âœ… Written to {args.output}")
         else:
             print(output)
@@ -266,7 +269,7 @@ def main():
     output = "\n".join(sections)
     
     if args.output:
-        Path(args.output).write_text(output)
+        Path(args.output).write_text(output, encoding="utf-8")
         print(f"✅ Written to {args.output}")
     else:
         print(output)
