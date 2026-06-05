@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -127,6 +128,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -183,13 +185,43 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
+    text_output = "\n".join(sections)
+
+    if args.json:
+        json_output = _build_json(args, target, repo_name, branch, remote, has_unstaged, has_staged, tree_out, log, branches, contents if args.files else None)
+        output = json.dumps(json_output, indent=2, ensure_ascii=False)
+    else:
+        output = text_output
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
     else:
         print(output)
+
+
+def _build_json(args, target, repo_name, branch, remote, has_unstaged, has_staged, tree_out, log, branches, contents):
+    status = []
+    if not has_unstaged and not has_staged:
+        status.append("Working tree: clean")
+    if has_unstaged:
+        status.append(f"Unstaged changes: {has_unstaged.split(chr(10))[-1]}")
+    if has_staged:
+        status.append(f"Staged changes: {has_staged.split(chr(10))[-1]}")
+    result = {
+        "repo_name": repo_name,
+        "path": target,
+        "generated_at": datetime.now().isoformat(),
+        "git_info": {"branch": branch, "remote": remote, "status": status},
+        "tree": tree_out.strip(),
+    }
+    if args.log > 0 and log:
+        result["commits"] = [line.strip() for line in log.split("\n") if line.strip()]
+    if branches:
+        result["branches"] = [b.strip() for b in branches.split("\n") if b.strip()]
+    if contents:
+        result["file_contents"] = contents
+    return result
 
 if __name__ == '__main__':
     main()
