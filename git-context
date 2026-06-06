@@ -8,7 +8,9 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
+import re
 import subprocess
 import sys
 import fnmatch
@@ -127,6 +129,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -183,8 +186,70 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
+    if args.json:
+        # JSON output mode
+        data = {
+            "repo": repo_name,
+            "generated": datetime.now().isoformat(),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "status": "clean" if (not has_unstaged and not has_staged) else {
+                    "unstaged": has_unstaged,
+                    "staged": has_staged,
+                },
+            },
+            "branches": [b.strip() for b in branches.splitlines() if b.strip()] if branches else [],
+            "tree": tree_out.strip(),
+        }
+
+        # Commits
+        if args.log > 0 and log:
+            commits = []
+            for line in log.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # Strip graph markers (*, |, /, \)
+                line = re.sub(r'^[\*|/\\]+\s*', '', line)
+                # Parse: "abc1234 (HEAD -> main) commit message (Author, 2 days ago)"
+                parts = line.split(" ", 1)
+                sha = parts[0] if parts else ""
+                rest = parts[1] if len(parts) > 1 else ""
+                commits.append({"sha": sha, "summary": rest})
+            data["commits"] = commits
+        else:
+            data["commits"] = []
+
+        # File contents
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                files_dict = {}
+                current_file = None
+                current_lines = []
+                for line in contents.splitlines():
+                    if line.startswith("--- ") and line.endswith(" ---"):
+                        if current_file:
+                            files_dict[current_file] = "\n".join(current_lines)
+                        current_file = line[4:-4]
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
+                if current_file:
+                    files_dict[current_file] = "\n".join(current_lines)
+                data["files"] = files_dict
+            else:
+                data["files"] = {}
+        else:
+            data["files"] = {}
+
+        output = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        # Default markdown output
+        output = "\n".join(sections)
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
