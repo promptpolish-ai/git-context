@@ -127,6 +127,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of plain text')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -184,6 +185,27 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
+    
+    if args.json:
+        import json as _json
+        json_out = {
+            "project": os.path.basename(target),
+            "repo_path": target,
+            "depth": args.depth,
+            "commits_shown": args.log if args.log > 0 else 0,
+            "files_included": args.files,
+            "sections": {}
+        }
+        # Parse sections into structured JSON
+        current_section = "header"
+        json_out["sections"]["header"] = []
+        for line in sections:
+            if line.startswith("## "):
+                current_section = line[3:].strip().lower().replace(" ", "_")
+                json_out["sections"][current_section] = []
+            else:
+                json_out["sections"].setdefault(current_section, []).append(line)
+        output = _json.dumps(json_out, indent=2, ensure_ascii=False)
     
     if args.output:
         Path(args.output).write_text(output)
