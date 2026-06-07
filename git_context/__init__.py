@@ -89,8 +89,10 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
     result = ""
     total = 0
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+        dirs[:] = [d for d in dirs if not d.startswith('.') and not should_ignore(d, ignored)]
         for f in sorted(files):
+            if f.startswith('.') or should_ignore(f, ignored):
+                continue
             ext = os.path.splitext(f)[1].lower()
             if f.endswith('.min.js') or f.endswith('.min.css'):
                 continue
