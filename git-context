@@ -8,12 +8,16 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import fnmatch
 from pathlib import Path
 from datetime import datetime
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DEFAULT_IGNORE = {
     '.git', 'node_modules', '.next', 'dist', 'build', 'target',
@@ -128,6 +132,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,6 +141,54 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+
+    if args.json:
+        result = {
+            "repository": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+        }
+
+        branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
+        remote = run(["git", "remote", "get-url", "origin"], target)
+        has_unstaged = run(["git", "diff", "--stat"], target)
+        has_staged = run(["git", "diff", "--cached", "--stat"], target)
+
+        result["git"] = {
+            "branch": branch,
+            "remote": remote,
+            "unstaged_changes": has_unstaged or None,
+            "staged_changes": has_staged or None,
+            "working_tree": "clean" if not has_unstaged and not has_staged else "dirty"
+        }
+
+        if args.log > 0:
+            log = run(["git", "log", f"--max-count={args.log}", "--oneline",
+                        "--pretty=format:%h %d %s (%an, %ar)"], target)
+            if log:
+                result["commits"] = [line.strip() for line in log.split("\n") if line.strip()]
+
+        branches = run(["git", "branch", "-a"], target)
+        if branches:
+            result["branches"] = [b.strip().lstrip("* ") for b in branches.split("\n") if b.strip()]
+
+        tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
+        result["structure"] = tree_out.strip()
+
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                result["files"] = contents.strip()
+
+        output = json.dumps(result, indent=2, ensure_ascii=False)
+
+        if args.output:
+            Path(args.output).write_text(output, encoding='utf-8')
+            print(f"\u2705 Written to {args.output}")
+        else:
+            print(output)
+        return
+
     sections = []
     sections.append(f"# git-context: {repo_name}")
     sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
