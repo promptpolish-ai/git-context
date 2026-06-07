@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as structured JSON')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -158,6 +160,7 @@ def main():
     sections.append(status)
 
     # Recent commits
+    log = ""
     if args.log > 0:
         log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
                     "--pretty=format:%h %d %s (%an, %ar)"], target)
@@ -177,14 +180,39 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
+    if args.json:
+        data = {
+            "repo_name": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "working_tree": "clean" if not has_unstaged and not has_staged else "dirty",
+            }
+        }
+        if has_unstaged:
+            data["git"]["unstaged_changes"] = has_unstaged.split(chr(10))[-1]
+        if has_staged:
+            data["git"]["staged_changes"] = has_staged.split(chr(10))[-1]
+        if args.log > 0 and log:
+            data["recent_commits"] = log
+        if branches:
+            data["branches"] = branches
+        data["project_structure"] = tree_out
+        if args.files and contents:
+            data["file_contents"] = contents
+        output = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        output = "\n".join(sections)
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
