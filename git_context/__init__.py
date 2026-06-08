@@ -128,6 +128,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -184,6 +185,30 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
+    
+    if args.json:
+        # Build JSON-compatible data structure
+        data = {
+            "repo_name": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "branch": branch,
+            "remote": remote,
+            "status": {
+                "unstaged": has_unstaged if has_unstaged else None,
+                "staged": has_staged if has_staged else None,
+                "clean": not has_unstaged and not has_staged
+            }
+        }
+        if args.log > 0 and log:
+            data["recent_commits"] = log
+        if branches:
+            data["branches"] = branches
+        data["project_structure"] = tree_out
+        if args.files and contents:
+            data["file_contents"] = contents
+        
+        output = json.dumps(data, indent=2)
     
     if args.output:
         Path(args.output).write_text(output)
