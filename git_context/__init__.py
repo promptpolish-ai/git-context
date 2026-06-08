@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -127,6 +128,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -158,6 +160,7 @@ def main():
     sections.append(status)
 
     # Recent commits
+    log = ""
     if args.log > 0:
         log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
                     "--pretty=format:%h %d %s (%an, %ar)"], target)
@@ -177,6 +180,7 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
@@ -185,10 +189,29 @@ def main():
 
     output = "\n".join(sections)
     
+    if args.json:
+        output = json.dumps({
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "working_tree": "clean" if not has_unstaged and not has_staged else "dirty",
+                "unstaged_changes": has_unstaged,
+                "staged_changes": has_staged,
+            },
+            "recent_commits": log if args.log > 0 else "",
+            "branches": branches,
+            "project_structure": tree_out,
+            "file_contents": contents if args.files else "",
+        }, indent=2, ensure_ascii=False)
+    
     if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        Path(args.output).write_text(output, encoding='utf-8')
+        print(f"Written to {args.output}")
     else:
+        sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
         print(output)
 
 if __name__ == '__main__':
