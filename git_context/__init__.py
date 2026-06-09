@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-git-context — Generate AI-friendly context for any git repo.
+git-context 鈥?Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -60,10 +61,10 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
     result = ""
     for i, (name, fp, is_dir) in enumerate(items):
         is_last = i == len(items) - 1
-        conn = "└── " if is_last else "├── "
+        conn = "鈹斺攢鈹€ " if is_last else "鈹溾攢鈹€ "
         result += f"{prefix}{conn}{name}/\n" if is_dir else f"{prefix}{conn}{name}  ({size_fmt(os.path.getsize(fp))})\n"
         if is_dir:
-            deeper = "    " if is_last else "│   "
+            deeper = "    " if is_last else "鈹?  "
             result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
     return result
 
@@ -128,11 +129,12 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
     if not os.path.isdir(os.path.join(target, '.git')):
-        print(f"❌ Not a git repo: {target}", file=sys.stderr)
+        print(f"鉂?Not a git repo: {target}", file=sys.stderr)
         sys.exit(1)
 
     repo_name = os.path.basename(target)
@@ -184,10 +186,53 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
-    
+
+    # JSON output mode
+    if args.json:
+        # Parse sections into structured data
+        data = {
+            "repo_name": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "has_unstaged": bool(has_unstaged),
+                "has_staged": bool(has_staged),
+                "unstaged_summary": has_unstaged.split('\n')[-1] if has_unstaged else None,
+                "staged_summary": has_staged.split('\n')[-1] if has_staged else None,
+            },
+            "recent_commits": [],
+            "branches": [],
+            "directory_tree": tree_out.strip(),
+            "file_contents": None,
+        }
+
+        # Parse commits
+        if args.log > 0 and log:
+            for line in log.split('\n'):
+                line = line.strip()
+                if line:
+                    data["recent_commits"].append(line)
+
+        # Parse branches
+        if branches:
+            for line in branches.split('\n'):
+                line = line.strip()
+                if line:
+                    data["branches"].append(line)
+
+        # File contents
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                data["file_contents"] = contents
+
+        output = json.dumps(data, indent=2, ensure_ascii=False)
+
     if args.output:
         Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        print(f"鉁?Written to {args.output}")
     else:
         print(output)
 
