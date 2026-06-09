@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', dest='json_output', help='Output as JSON instead of plain text')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -183,8 +185,47 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
+    if args.json_output:
+        # Collect structured data for JSON output
+        log_raw = run(["git", "log", f"--max-count={args.log}",
+                        "--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ae%x1f%ai"], target) if args.log > 0 else ""
+        commits = []
+        for line in log_raw.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) == 6:
+                commits.append({
+                    "hash": parts[0], "short": parts[1], "subject": parts[2],
+                    "author": parts[3], "email": parts[4], "date": parts[5]
+                })
+
+        branches_list = [b.strip().lstrip("* ") for b in
+                         run(["git", "branch", "-a"], target).splitlines() if b.strip()]
+
+        data = {
+            "repo": repo_name,
+            "generated": datetime.now().isoformat(),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "has_unstaged_changes": bool(has_unstaged),
+                "has_staged_changes": bool(has_staged),
+                "branches": branches_list,
+                "commits": commits,
+            },
+            "structure": tree(target, ignored=DEFAULT_IGNORE, depth=args.depth),
+            "files": file_contents(target) if args.files else None,
+        }
+        json_output_str = json.dumps(data, indent=2, ensure_ascii=False)
+        if args.output:
+            Path(args.output).write_text(json_output_str)
+            print(f"✅ JSON written to {args.output}", file=sys.stderr)
+        else:
+            print(json_output_str)
+        return
+
     output = "\n".join(sections)
-    
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
