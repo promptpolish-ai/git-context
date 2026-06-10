@@ -4,10 +4,11 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>] [--json]
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in structured JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -183,11 +185,57 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
+    if args.json:
+        import re
+        # Parse commits into structured objects
+        commit_list = []
+        if args.log > 0 and log:
+            for line in log.strip().split('\n'):
+                m = re.match(r'[*|/\\ ]*([a-f0-9]+)[\s]+(.*)', line.strip())
+                if m:
+                    commit_list.append({"hash": m.group(1), "subject": m.group(2).strip()})
+
+        # Parse branches into a list
+        branch_list = []
+        if branches:
+            for line in branches.strip().split('\n'):
+                b = line.strip().lstrip('* ')
+                if b and b not in branch_list:
+                    branch_list.append(b)
+
+        json_data = {
+            "meta": {
+                "tool": "git-context",
+                "version": "1.0",
+                "repo_name": repo_name,
+                "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "path": target,
+            },
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "status": status.strip().lstrip('- '),
+            },
+            "commits": commit_list,
+            "branches": branch_list,
+            "project_structure": {
+                "depth": args.depth,
+                "tree": tree_out,
+            },
+        }
+        if args.files:
+            json_data["file_contents"] = contents if contents else ""
+
+        output = json.dumps(json_data, indent=2, ensure_ascii=False)
+    else:
+        output = "\n".join(sections)
+
     if args.output:
         Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        if args.json:
+            print(json.dumps({"status": "ok", "format": "json", "path": str(args.output)}))
+        else:
+            print(f"✅ Written to {args.output}")
     else:
         print(output)
 
