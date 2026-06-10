@@ -15,6 +15,9 @@ git-context --depth 3
 # Output to file
 git-context --files -o ai-context.txt
 
+# JSON output for tools and scripts
+git-context --json
+
 # Any repo, anywhere
 git-context --dir /path/to/project
 ```
