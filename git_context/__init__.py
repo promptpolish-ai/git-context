@@ -1,3 +1,4 @@
+import json
 #!/usr/bin/env python3
 """
 git-context — Generate AI-friendly context for any git repo.
@@ -183,13 +184,28 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        # Build structured data for JSON output
+    data = {
+        "repo": repo_name,
+        "branch": branch,
+        "remote": remote,
+        "status": status.strip(),
+        "commits": log.split('\n') if args.log > 0 and log else [],
+        "branches": branches.split('\n') if branches else [],
+        "tree": tree_out,
+        "files": contents if args.files else "",
+        "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    if args.json:
+        print(json.dumps(data, indent=2))
     else:
-        print(output)
+        output = "\n".join(sections)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"✅ Written to {args.output}")
+        else:
+            print(output)
 
 if __name__ == '__main__':
     main()
