@@ -23,6 +23,9 @@ python3 git-context --depth 2
 # Write to file instead of stdout
 python3 git-context --files -o context.txt
 
+# Emit machine-readable JSON
+python3 git-context --json
+
 # Any git repo, anywhere
 python3 git-context --dir /path/to/repo
 ```
@@ -54,4 +57,3 @@ If git-context saves you time, consider buying me a coffee:
 **Ko-fi:** [https://ko-fi.com/promptpolish](https://ko-fi.com/promptpolish) *(coming soon)*
 
 **BTC:** `bc1qxlj7xlhp7e6v2qw2k6uy7n3z3q3p3k3z3q3p3`
-
