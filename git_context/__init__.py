@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -127,67 +128,92 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output as JSON')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
     if not os.path.isdir(os.path.join(target, '.git')):
-        print(f"❌ Not a git repo: {target}", file=sys.stderr)
+        print(f"Not a git repo: {target}", file=sys.stderr)
         sys.exit(1)
 
     repo_name = os.path.basename(target)
-    sections = []
-    sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    sections.append(f"Path: {target}")
-    sections.append("")
 
-    # Git info
+    # Gather all data
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
     remote = run(["git", "remote", "get-url", "origin"], target)
-    sections.append(f"## Git Info\n- Branch: `{branch}`")
-    sections.append(f"- Remote: {remote}")
-    
     has_unstaged = run(["git", "diff", "--stat"], target)
     has_staged = run(["git", "diff", "--cached", "--stat"], target)
-    status = ""
-    if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
-    if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
-    if not has_unstaged and not has_staged:
-        status += "\n- Working tree: clean"
-    sections.append(status)
+    working_tree = "clean"
+    if has_unstaged:
+        working_tree = f"unstaged: {has_unstaged.split(chr(10))[-1]}"
+    if has_staged:
+        working_tree = f"staged: {has_staged.split(chr(10))[-1]}"
+    if has_unstaged and has_staged:
+        working_tree = f"unstaged: {has_unstaged.split(chr(10))[-1]}; staged: {has_staged.split(chr(10))[-1]}"
 
-    # Recent commits
+    log_lines = []
     if args.log > 0:
-        log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
-                    "--pretty=format:%h %d %s (%an, %ar)"], target)
-        if log:
-            sections.append(f"\n## Recent Commits (last {args.log})")
-            sections.append(f"```\n{log}\n```")
+        log_raw = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
+                       "--pretty=format:%h %d %s (%an, %ar)"], target)
+        log_lines = log_raw.split("\n") if log_raw else []
 
-    # Branch topology
-    branches = run(["git", "branch", "-a"], target)
-    if branches:
-        sections.append("\n## Branches")
-        sections.append(f"```\n{branches}\n```")
+    branches_raw = run(["git", "branch", "-a"], target)
+    branches_list = [b.strip() for b in branches_raw.split("\n") if b.strip()] if branches_raw else []
 
-    # Directory tree
     tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
-    sections.append(f"\n## Project Structure (depth={args.depth})")
-    sections.append(f"```\n{tree_out}\n```")
 
-    # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
-        if contents:
+
+    if args.json:
+        data = {
+            "tool": "git-context",
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "working_tree": working_tree
+            },
+            "commits": log_lines,
+            "branches": branches_list,
+            "tree": tree_out.strip(),
+            "file_contents": contents.strip() if contents else None
+        }
+        output = json.dumps(data, indent=2)
+    else:
+        sections = []
+        sections.append(f"# git-context: {repo_name}")
+        sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        sections.append(f"Path: {target}")
+        sections.append("")
+        sections.append(f"## Git Info\n- Branch: `{branch}`")
+        sections.append(f"- Remote: {remote}")
+        status = ""
+        if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
+        if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
+        if not has_unstaged and not has_staged:
+            status += "\n- Working tree: clean"
+        sections.append(status)
+        if args.log > 0 and log_lines:
+            sections.append(f"\n## Recent Commits (last {args.log})")
+            sections.append(f"```\n{chr(10).join(log_lines)}\n```")
+        if branches_list:
+            sections.append("\n## Branches")
+            sections.append(f"```\n{chr(10).join(branches_list)}\n```")
+        sections.append(f"\n## Project Structure (depth={args.depth})")
+        sections.append(f"```\n{tree_out}\n```")
+        if args.files and contents:
             sections.append("\n## File Contents")
             sections.append(contents)
+        output = "\n".join(sections)
 
-    output = "\n".join(sections)
-    
     if args.output:
         Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        print(f"Written to {args.output}")
     else:
         print(output)
 
