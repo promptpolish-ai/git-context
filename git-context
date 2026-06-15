@@ -4,7 +4,7 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>] [--json]
 """
 
 import argparse
@@ -128,6 +128,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -185,7 +186,23 @@ def main():
 
     output = "\n".join(sections)
     
-    if args.output:
+    if args.json:
+        import json as json_mod
+        json_output = {
+            "repo": repo_name,
+            "generated_at": datetime.now().isoformat(),
+            "path": target,
+            "branch": branch,
+            "remote": remote,
+            "tree": tree_out.strip(),
+        }
+        json_str = json_mod.dumps(json_output, indent=2)
+        if args.output:
+            Path(args.output).write_text(json_str)
+            print(f"✅ JSON written to {args.output}")
+        else:
+            print(json_str)
+    elif args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
     else:
