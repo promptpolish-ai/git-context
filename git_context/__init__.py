@@ -128,6 +128,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -184,7 +185,27 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
-    
+
+    if args.json:
+        import json
+        json_data = {
+            "repo": repo_name,
+            "path": target,
+            "branch": branch,
+            "remote": remote,
+            "generated": datetime.now().isoformat(),
+            "has_changes": bool(has_unstaged or has_staged),
+            "recent_commits": [] if args.log <= 0 else [l.strip() for l in (log.split('\n') if log else [])],
+            "branches": [b.strip() for b in (branches.split('\n') if branches else [])],
+            "structure": tree_out.strip(),
+            "files": {} if not args.files else {},
+        }
+        output = json.dumps(json_data, indent=2, ensure_ascii=False)
+        if args.files:
+            output_lines = output.split('\n')
+            output_lines.insert(-1, '  "files_included": true')
+            output = '\n'.join(output_lines)
+
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
