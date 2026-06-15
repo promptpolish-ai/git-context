@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-git-context — Generate AI-friendly context for any git repo.
+git-context ??? Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -60,10 +61,10 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
     result = ""
     for i, (name, fp, is_dir) in enumerate(items):
         is_last = i == len(items) - 1
-        conn = "└── " if is_last else "├── "
+        conn = "????????? " if is_last else "????????? "
         result += f"{prefix}{conn}{name}/\n" if is_dir else f"{prefix}{conn}{name}  ({size_fmt(os.path.getsize(fp))})\n"
         if is_dir:
-            deeper = "    " if is_last else "│   "
+            deeper = "    " if is_last else "???   "
             result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
     return result
 
@@ -121,18 +122,68 @@ def fmt_timestamp(ts):
     except:
         return ts[:19]
 
-def main():
+def file_contents_json(path, ignored=DEFAULT_IGNORE, max_total=15000):
+    """Like file_contents() but returns a list of dicts for JSON output."""
+    ext_map = {
+        '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
+        '.go': 'go', '.rs': 'rs', '.rb': 'rb', '.java': 'java', '.kt': 'kt',
+        '.swift': 'swift', '.c': 'c', '.h': 'h', '.cpp': 'cpp', '.hpp': 'hpp',
+        '.cs': 'cs', '.php': 'php', '.vue': 'vue', '.svelte': 'svelte',
+        '.css': 'css', '.scss': 'scss', '.html': 'html', '.xml': 'xml',
+        '.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml',
+        '.md': 'md', '.txt': 'txt', '.sh': 'sh', '.bash': 'sh', '.zsh': 'sh',
+        '.sql': 'sql', '.graphql': 'graphql', '.proto': 'proto',
+        '.dockerfile': 'dockerfile', '.tf': 'tf', '.env': 'env',
+        '.conf': 'conf', '.ini': 'ini', '.cfg': 'cfg',
+    }
+    snippet_exts = {'.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.rb',
+                    '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.cs', '.php',
+                    '.vue', '.svelte', '.css', '.scss', '.html', '.xml',
+                    '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
+                    '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
+    result = []
+    total = 0
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+        for f in sorted(files):
+            ext = os.path.splitext(f)[1].lower()
+            if f.endswith('.min.js') or f.endswith('.min.css'):
+                continue
+            if ext not in snippet_exts:
+                continue
+            fp = os.path.join(root, f)
+            try:
+                content = Path(fp).read_text(encoding='utf-8', errors='replace')
+                rel = os.path.relpath(fp, path)
+                if total + len(content) > max_total:
+                    break
+                result.append({
+                    "file": rel.replace("\\", "/"),
+                    "language": ext_map.get(ext, ""),
+                    "content": content.strip()
+                })
+                total += len(content)
+            except Exception:
+                continue
+        if total >= max_total:
+            break
+    return result
+
+def main():    # Ensure UTF-8 output on all platforms (fixes Windows console encoding)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format instead of markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
     if not os.path.isdir(os.path.join(target, '.git')):
-        print(f"❌ Not a git repo: {target}", file=sys.stderr)
+        print(f"??? Not a git repo: {target}", file=sys.stderr)
         sys.exit(1)
 
     repo_name = os.path.basename(target)
@@ -158,6 +209,7 @@ def main():
     sections.append(status)
 
     # Recent commits
+    log = ""
     if args.log > 0:
         log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
                     "--pretty=format:%h %d %s (%an, %ar)"], target)
@@ -183,13 +235,33 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
-    
+    if args.json:
+        data = {
+            "repo_name": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git_info": {
+                "branch": branch,
+                "remote": remote,
+                "unstaged_changes": has_unstaged or None,
+                "staged_changes": has_staged or None,
+                "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty"
+            },
+            "recent_commits": [line.strip() for line in log.split('\n') if line.strip()] if log else [],
+            "branches": [line.strip() for line in branches.split('\n') if line.strip()] if branches else [],
+            "project_structure": tree_out,
+            "file_contents": file_contents_json(target) if args.files else []
+        }
+        output = json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        output = "\n".join(sections)
+
     if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
+        Path(args.output).write_text(output, encoding='utf-8')
+        print(f"??? Written to {args.output}")
     else:
         print(output)
 
 if __name__ == '__main__':
     main()
+
