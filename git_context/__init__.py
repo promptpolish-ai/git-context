@@ -16,7 +16,6 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-
 DEFAULT_IGNORE = {
     '.git', 'node_modules', '.next', 'dist', 'build', 'target',
     '__pycache__', '.cache', 'venv', '.venv', '.env', 'env',
@@ -116,14 +115,21 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
             break
     return result
 
+def fmt_timestamp(ts):
+    try:
+        dt = datetime.fromisoformat(ts)
+        return dt.strftime('%Y-%m-%d %H:%M')
+    except:
+        return ts[:19]
+
 def main():
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
-    p.add_argument('--json', action='store_true', help='Output as JSON instead of text')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -133,66 +139,74 @@ def main():
 
     repo_name = os.path.basename(target)
     
-    data = {
-        "repo_name": repo_name,
-        "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "path": target,
-        "git_info": {},
-        "commits": [],
-        "branches": [],
-        "structure": "",
-        "files": ""
+    # Collect data
+    git_info = {
+        "branch": run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target),
+        "remote": run(["git", "remote", "get-url", "origin"], target),
     }
-
-    # Git info
-    data["git_info"]["branch"] = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
-    data["git_info"]["remote"] = run(["git", "remote", "get-url", "origin"], target)
     
     has_unstaged = run(["git", "diff", "--stat"], target)
     has_staged = run(["git", "diff", "--cached", "--stat"], target)
-    data["git_info"]["status"] = "clean"
-    if has_unstaged: data["git_info"]["status"] += f"\nUnstaged: {has_unstaged.split(chr(10))[-1]}"
-    if has_staged: data["git_info"]["status"] += f"\nStaged: {has_staged.split(chr(10))[-1]}"
-
-    # Recent commits
+    status_msg = ""
+    if has_unstaged: status_msg += f"Unstaged changes: {has_unstaged.split(chr(10))[-1]} "
+    if has_staged: status_msg += f"Staged changes: {has_staged.split(chr(10))[-1]} "
+    if not has_unstaged and not has_staged:
+        status_msg = "Working tree: clean"
+    
+    git_info["status"] = status_msg.strip()
+    
+    log_data = []
     if args.log > 0:
-        log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
-                    "--pretty=format:%h %d %s (%an, %ar)"], target)
-        data["commits"] = log.splitlines() if log else []
-
-    # Branch topology
-    branches = run(["git", "branch", "-a"], target)
-    data["branches"] = branches.splitlines() if branches else []
-
-    # Directory tree
-    data["structure"] = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
-
-    # File contents
+        raw_log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
+                        "--pretty=format:%h %d %s (%an, %ar)"], target)
+        if raw_log:
+            log_data = raw_log.splitlines()
+    
+    branches_data = run(["git", "branch", "-a"], target)
+    
+    tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
+    
+    contents_data = ""
     if args.files:
-        data["files"] = file_contents(target)
+        contents_data = file_contents(target)
 
+    # Output logic
     if args.json:
+        data = {
+            "repo_name": repo_name,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git_info": git_info,
+            "recent_commits": log_data,
+            "branches": branches_data,
+            "project_structure": tree_out,
+            "file_contents": contents_data
+        }
         output = json.dumps(data, indent=2)
     else:
         sections = [
-            f"# git-context: {data['repo_name']}",
-            f"Generated: {data['generated_at']}",
-            f"Path: {data['path']}",
+            f"# git-context: {repo_name}",
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Path: {target}",
             "",
-            f"## Git Info\n- Branch: `{data['git_info']['branch']}`",
-            f"- Remote: {data['git_info']['remote']}",
-            data["git_info"]["status"],
+            f"## Git Info\n- Branch: `{git_info['branch']}`",
+            f"- Remote: {git_info['remote']}",
+            f"Status: {git_info['status']}",
             "",
         ]
-        if data["commits"]:
-            sections.append(f"## Recent Commits (last {args.log})\n```\n" + "\n".join(data["commits"]) + "\n```")
-        if data["branches"]:
-            sections.append(f"\n## Branches\n```\n" + "\n".join(data["branches"]) + "\n```")
-        sections.append(f"\n## Project Structure (depth={args.depth})\n```\n{data['structure']}\n```")
-        if data["files"]:
-            sections.append(f"\n## File Contents\n{data['files']}")
+        if log_data:
+            sections.append(f"## Recent Commits (last {args.log})")
+            sections.append(f"```\n{''.join(log_data)}\n```")
+        if branches_data:
+            sections.append(f"\n## Branches")
+            sections.append(f"```\n{branches_data}\n```")
+        sections.append(f"\n## Project Structure (depth={args.depth})")
+        sections.append(f"```\n{tree_out}\n```")
+        if contents_data:
+            sections.append("\n## File Contents")
+            sections.append(contents_data)
         output = "\n".join(sections)
-
+    
     if args.output:
         Path(args.output).write_text(output)
         print(f"✅ Written to {args.output}")
