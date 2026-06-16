@@ -183,7 +183,26 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
+    if args.json:
+        import json as _json
+        json_data = {
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "branch": branch,
+            "remote": remote,
+            "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty",
+            "uncommitted_staged": has_staged[:200] if has_staged else "",
+            "uncommitted_unstaged": has_unstaged[:200] if has_unstaged else "",
+            "recent_commits": log if args.log > 0 else "",
+            "branches": branches,
+            "directory_tree": tree_out,
+            "files": file_contents(target) if args.files else {}
+        }
+        output = _json.dumps(json_data, indent=2, default=str)
+    else:
+        output = "
+".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
