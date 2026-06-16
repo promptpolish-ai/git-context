@@ -127,6 +127,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -183,6 +184,11 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
+    if args.json:
+        import json as _json
+        json_out = {"repo": repo_name, "generated": datetime.now().isoformat(), "path": target, "branch": branch, "remote": remote, "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty", "commits": log if args.log > 0 else "", "branches": branches, "tree": tree_out}
+        print(_json.dumps(json_out, indent=2, default=str))
+        return
     output = "\n".join(sections)
     
     if args.output:
