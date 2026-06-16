@@ -127,6 +127,7 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
 
@@ -185,24 +186,10 @@ def main():
 
     if args.json:
         import json as _json
-        json_data = {
-            "repo": repo_name,
-            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "path": target,
-            "branch": branch,
-            "remote": remote,
-            "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty",
-            "uncommitted_staged": has_staged[:200] if has_staged else "",
-            "uncommitted_unstaged": has_unstaged[:200] if has_unstaged else "",
-            "recent_commits": log if args.log > 0 else "",
-            "branches": branches,
-            "directory_tree": tree_out,
-            "files": file_contents(target) if args.files else {}
-        }
-        output = _json.dumps(json_data, indent=2, default=str)
-    else:
-        output = "
-".join(sections)
+        json_out = {"repo": repo_name, "generated": datetime.now().isoformat(), "path": target, "branch": branch, "remote": remote, "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty", "commits": log if args.log > 0 else "", "branches": branches, "tree": tree_out}
+        print(_json.dumps(json_out, indent=2, default=str))
+        return
+    output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
