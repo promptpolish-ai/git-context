@@ -4,7 +4,7 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>] [--json]
 """
 
 import argparse
@@ -14,6 +14,7 @@ import sys
 import fnmatch
 from pathlib import Path
 from datetime import datetime
+import json
 
 DEFAULT_IGNORE = {
     '.git', 'node_modules', '.next', 'dist', 'build', 'target',
@@ -67,7 +68,7 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
             result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
     return result
 
-def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
+def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000, as_json=False):
     ext_map = {
         '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
         '.go': 'go', '.rs': 'rs', '.rb': 'rb', '.java': 'java', '.kt': 'kt',
@@ -86,7 +87,8 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
                     '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
                     '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
     
-    result = ""
+    result_str = ""
+    result_list = []
     total = 0
     for root, dirs, files in os.walk(path):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
@@ -100,19 +102,27 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
             try:
                 content = Path(fp).read_text(encoding='utf-8', errors='replace')
                 rel = os.path.relpath(fp, path)
-                block = f"\n--- {rel} ---\n```{ext_map.get(ext, '')}\n{content.strip()}\n```\n"
-                if total + len(block) > max_total:
-                    remaining = max_total - total
-                    result += block[:remaining] + f"\n... (truncated, more files in {rel})"
-                    total = max_total
-                    break
-                result += block
-                total += len(block)
+                
+                if as_json:
+                    if total + len(content) > max_total:
+                        continue
+                    result_list.append({"path": rel, "content": content.strip()})
+                    total += len(content)
+                else:
+                    block = f"\n--- {rel} ---\n```{ext_map.get(ext, '')}\n{content.strip()}\n```\n"
+                    if total + len(block) > max_total:
+                        remaining = max_total - total
+                        result_str += block[:remaining] + f"\n... (truncated, more files in {rel})"
+                        total = max_total
+                        break
+                    result_str += block
+                    total += len(block)
             except Exception:
                 continue
         if total >= max_total:
             break
-    return result
+            
+    return result_list if as_json else result_str
 
 def fmt_timestamp(ts):
     try:
@@ -128,6 +138,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,54 +147,83 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
-    sections = []
-    sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    sections.append(f"Path: {target}")
-    sections.append("")
-
+    
     # Git info
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
     remote = run(["git", "remote", "get-url", "origin"], target)
-    sections.append(f"## Git Info\n- Branch: `{branch}`")
-    sections.append(f"- Remote: {remote}")
-    
     has_unstaged = run(["git", "diff", "--stat"], target)
     has_staged = run(["git", "diff", "--cached", "--stat"], target)
-    status = ""
-    if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
-    if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
-    if not has_unstaged and not has_staged:
-        status += "\n- Working tree: clean"
-    sections.append(status)
+    
+    if args.json:
+        out_data = {
+            "repo_name": repo_name,
+            "generated_at": datetime.now().isoformat(),
+            "path": target,
+            "git_info": {
+                "branch": branch,
+                "remote": remote,
+                "unstaged_changes": has_unstaged if has_unstaged else None,
+                "staged_changes": has_staged if has_staged else None,
+                "clean": not has_unstaged and not has_staged
+            }
+        }
+        if args.log > 0:
+            log_str = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph", "--pretty=format:%h %d %s (%an, %ar)"], target)
+            out_data["recent_commits"] = log_str if log_str else None
+        
+        branches = run(["git", "branch", "-a"], target)
+        out_data["branches"] = branches if branches else None
+        
+        out_data["project_structure"] = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
+        
+        if args.files:
+            out_data["file_contents"] = file_contents(target, as_json=True)
+            
+        output = json.dumps(out_data, indent=2)
+    else:
+        sections = []
+        sections.append(f"# git-context: {repo_name}")
+        sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        sections.append(f"Path: {target}")
+        sections.append("")
 
-    # Recent commits
-    if args.log > 0:
-        log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
-                    "--pretty=format:%h %d %s (%an, %ar)"], target)
-        if log:
-            sections.append(f"\n## Recent Commits (last {args.log})")
-            sections.append(f"```\n{log}\n```")
+        sections.append(f"## Git Info\n- Branch: `{branch}`")
+        sections.append(f"- Remote: {remote}")
+        
+        status = ""
+        if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
+        if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
+        if not has_unstaged and not has_staged:
+            status += "\n- Working tree: clean"
+        sections.append(status)
 
-    # Branch topology
-    branches = run(["git", "branch", "-a"], target)
-    if branches:
-        sections.append("\n## Branches")
-        sections.append(f"```\n{branches}\n```")
+        # Recent commits
+        if args.log > 0:
+            log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
+                        "--pretty=format:%h %d %s (%an, %ar)"], target)
+            if log:
+                sections.append(f"\n## Recent Commits (last {args.log})")
+                sections.append(f"```\n{log}\n```")
 
-    # Directory tree
-    tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
-    sections.append(f"\n## Project Structure (depth={args.depth})")
-    sections.append(f"```\n{tree_out}\n```")
+        # Branch topology
+        branches = run(["git", "branch", "-a"], target)
+        if branches:
+            sections.append("\n## Branches")
+            sections.append(f"```\n{branches}\n```")
 
-    # File contents
-    if args.files:
-        contents = file_contents(target)
-        if contents:
-            sections.append("\n## File Contents")
-            sections.append(contents)
+        # Directory tree
+        tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
+        sections.append(f"\n## Project Structure (depth={args.depth})")
+        sections.append(f"```\n{tree_out}\n```")
 
-    output = "\n".join(sections)
+        # File contents
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                sections.append("\n## File Contents")
+                sections.append(contents)
+
+        output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
