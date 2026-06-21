@@ -9,7 +9,7 @@ setup(
     url="https://github.com/promptpolish-ai/git-context",
     author="gitcontext",
     license="MIT",
-    py_modules=["git-context"],
+    packages=find_packages(),
     python_requires=">=3.8",
     entry_points={"console_scripts": ["git-context=git-context:main"]},
 )
