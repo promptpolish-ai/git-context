@@ -4,10 +4,11 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--json] [--log N] [--output file] [--dir <path>]
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -30,6 +31,12 @@ def run(cmd, cwd=None):
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
         return ""
+
+def configure_stdout():
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        pass
 
 def size_fmt(n):
     if n > 1_000_000: return f"{n/1_000_000:.1f}MB"
@@ -114,6 +121,9 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
             break
     return result
 
+def split_lines(text):
+    return text.splitlines() if text else []
+
 def fmt_timestamp(ts):
     try:
         dt = datetime.fromisoformat(ts)
@@ -122,9 +132,11 @@ def fmt_timestamp(ts):
         return ts[:19]
 
 def main():
+    configure_stdout()
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
+    p.add_argument('--json', dest='json_output', action='store_true', help='Output repo context as JSON')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
@@ -136,9 +148,10 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+    generated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     sections = []
     sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    sections.append(f"Generated: {generated_at}")
     sections.append(f"Path: {target}")
     sections.append("")
 
@@ -158,6 +171,7 @@ def main():
     sections.append(status)
 
     # Recent commits
+    log = ""
     if args.log > 0:
         log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
                     "--pretty=format:%h %d %s (%an, %ar)"], target)
@@ -177,16 +191,38 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
+    if args.json_output:
+        context = {
+            "repo": repo_name,
+            "generated": generated_at,
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "working_tree": {
+                    "clean": not has_unstaged and not has_staged,
+                    "unstaged": has_unstaged,
+                    "staged": has_staged,
+                },
+            },
+            "recent_commits": split_lines(log),
+            "branches": split_lines(branches),
+            "project_structure": tree_out,
+            "file_contents": contents,
+        }
+        output = json.dumps(context, indent=2, ensure_ascii=False)
+    else:
+        output = "\n".join(sections)
     
     if args.output:
-        Path(args.output).write_text(output)
+        Path(args.output).write_text(output, encoding='utf-8')
         print(f"✅ Written to {args.output}")
     else:
         print(output)
