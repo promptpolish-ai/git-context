@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -183,7 +185,25 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
+    if args.json:
+        data = {
+            "repo": repo_name,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git_info": {
+                "branch": branch,
+                "remote": remote,
+                "has_unstaged": bool(has_unstaged),
+                "has_staged": bool(has_staged),
+            },
+            "recent_commits": log if args.log > 0 else None,
+            "branches": branches,
+            "project_structure": tree_out,
+            "file_contents": file_contents(target) if args.files else None,
+        }
+        output = json.dumps(data, indent=2)
+    else:
+        output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
