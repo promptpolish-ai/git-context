@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 git-context — Generate AI-friendly context for any git repo.
-Dump project structure, git log, file contents, and branch topology
-in one optimized prompt-ready block.
+v2: Added --json output mode for programmatic consumption.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>] [--json]
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -67,6 +67,31 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
             result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
     return result
 
+def tree_json(path, ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
+    """Return directory tree as a nested dict for JSON output."""
+    if current_depth > depth:
+        return None
+    items = []
+    try:
+        entries = sorted(os.listdir(path))
+    except PermissionError:
+        return {"type": "dir", "name": os.path.basename(path), "error": "Permission denied"}
+    for e in entries:
+        fp = os.path.join(path, e)
+        if e.startswith('.') or should_ignore(e, ignored):
+            continue
+        if os.path.isdir(fp):
+            child = tree_json(fp, ignored, depth, current_depth + 1)
+            items.append(child if child else {"type": "dir", "name": e})
+        else:
+            items.append({
+                "type": "file",
+                "name": e,
+                "size": os.path.getsize(fp),
+                "size_human": size_fmt(os.path.getsize(fp)),
+            })
+    return {"type": "dir", "name": os.path.basename(path) if current_depth > 0 else ".", "children": items}
+
 def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
     ext_map = {
         '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
@@ -114,12 +139,109 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
             break
     return result
 
+def file_contents_json(path, ignored=DEFAULT_IGNORE, max_total=15000):
+    """Return file contents as a dict for JSON output."""
+    ext_map = {
+        '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
+        '.go': 'go', '.rs': 'rs', '.rb': 'rb', '.java': 'java', '.kt': 'kt',
+        '.swift': 'swift', '.c': 'c', '.h': 'h', '.cpp': 'cpp', '.hpp': 'hpp',
+        '.cs': 'cs', '.php': 'php', '.vue': 'vue', '.svelte': 'svelte',
+        '.css': 'css', '.scss': 'scss', '.html': 'html', '.xml': 'xml',
+        '.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml',
+        '.md': 'md', '.txt': 'txt', '.sh': 'sh', '.bash': 'sh', '.zsh': 'sh',
+        '.sql': 'sql', '.graphql': 'graphql', '.proto': 'proto',
+        '.dockerfile': 'dockerfile', '.tf': 'tf', '.env': 'env',
+        '.conf': 'conf', '.ini': 'ini', '.cfg': 'cfg',
+    }
+    snippet_exts = {'.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.rb',
+                    '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.cs', '.php',
+                    '.vue', '.svelte', '.css', '.scss', '.html', '.xml',
+                    '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
+                    '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
+    
+    files = []
+    total = 0
+    for root, dirs, filenames in os.walk(path):
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+        for f in sorted(filenames):
+            ext = os.path.splitext(f)[1].lower()
+            if f.endswith('.min.js') or f.endswith('.min.css'):
+                continue
+            if ext not in snippet_exts:
+                continue
+            fp = os.path.join(root, f)
+            try:
+                content = Path(fp).read_text(encoding='utf-8', errors='replace')
+                rel = os.path.relpath(fp, path)
+                file_entry = {
+                    "path": rel,
+                    "language": ext_map.get(ext, ""),
+                    "content": content.strip(),
+                }
+                content_len = len(content)
+                if total + content_len > max_total:
+                    remaining = max_total - total
+                    file_entry["content"] = content[:remaining] + f"\n... (truncated)"
+                    file_entry["truncated"] = True
+                    files.append(file_entry)
+                    total = max_total
+                    break
+                files.append(file_entry)
+                total += content_len
+            except Exception:
+                continue
+        if total >= max_total:
+            break
+    return files
+
 def fmt_timestamp(ts):
     try:
         dt = datetime.fromisoformat(ts)
         return dt.strftime('%Y-%m-%d %H:%M')
     except:
         return ts[:19]
+
+def build_json_output(target, args, repo_name):
+    """Build structured JSON output."""
+    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
+    remote = run(["git", "remote", "get-url", "origin"], target)
+    
+    has_unstaged = run(["git", "diff", "--stat"], target)
+    has_staged = run(["git", "diff", "--cached", "--stat"], target)
+    
+    data = {
+        "repo": repo_name,
+        "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        "path": target,
+        "git": {
+            "branch": branch,
+            "remote": remote,
+            "working_tree": "clean" if (not has_unstaged and not has_staged) else "dirty",
+            "unstaged_changes": has_unstaged.split("\n")[-1] if has_unstaged else None,
+            "staged_changes": has_staged.split("\n")[-1] if has_staged else None,
+        },
+    }
+    
+    # Commits
+    if args.log > 0:
+        log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
+                    "--pretty=format:%h %d %s (%an, %ar)"], target)
+        if log:
+            data["commits"] = [{"graph": line} for line in log.split("\n")]
+    
+    # Branches
+    branches = run(["git", "branch", "-a"], target)
+    if branches:
+        data["branches"] = [b.strip() for b in branches.split("\n")]
+    
+    # Tree
+    data["tree"] = tree_json(target, depth=args.depth)
+    
+    # Files (if requested)
+    if args.files:
+        data["files"] = file_contents_json(target)
+    
+    return data
 
 def main():
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
@@ -128,6 +250,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of plain text')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,6 +259,19 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+    
+    # --- JSON output mode ---
+    if args.json:
+        data = build_json_output(target, args, repo_name)
+        output = json.dumps(data, indent=2, ensure_ascii=False)
+        if args.output:
+            Path(args.output).write_text(output)
+            print(f"✅ JSON written to {args.output}")
+        else:
+            print(output)
+        return
+
+    # --- Original text output mode ---
     sections = []
     sections.append(f"# git-context: {repo_name}")
     sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
