@@ -8,6 +8,8 @@ One command → complete project context ready for any LLM:
 - 📜 Recent commit history
 - 📄 Source file contents (intelligent truncation)
 
+- JSON output for scripts and integrations
+
 ## Usage
 
 ```bash
@@ -19,6 +21,9 @@ python3 git-context --files
 
 # Custom depth (default: 4)
 python3 git-context --depth 2
+
+# Machine-readable JSON output
+python3 git-context --json
 
 # Write to file instead of stdout
 python3 git-context --files -o context.txt
