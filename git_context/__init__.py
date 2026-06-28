@@ -13,6 +13,7 @@ import subprocess
 import sys
 import fnmatch
 from pathlib import Path
+import json
 from datetime import datetime
 
 DEFAULT_IGNORE = {
@@ -128,6 +129,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output as JSON instead of markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -137,7 +139,20 @@ def main():
 
     repo_name = os.path.basename(target)
     sections = []
-    sections.append(f"# git-context: {repo_name}")
+        if args.json:
+        result = {}
+        result["repo"] = repo_name
+        result["generated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        result["path"] = target
+        result["git"] = {"branch": branch, "remote": remote, "unstaged_changes": bool(has_unstaged)}
+        result["commits"] = [l.strip() for l in (log or "").split(chr(10)) if l.strip()]
+        result["branches"] = [l.strip().lstrip("* ") for l in (branches or "").split(chr(10)) if l.strip()]
+        result["structure"] = tree_out.strip() if tree_out else ""
+        if args.files:
+            result["files"] = {"raw": file_contents(target)}
+        output = json.dumps(result, indent=2, ensure_ascii=False)
+    else:
+        sections.append(f"# git-context: {repo_name}")
     sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     sections.append(f"Path: {target}")
     sections.append("")
