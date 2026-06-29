@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import fnmatch
+import json
 from pathlib import Path
 from datetime import datetime
 
@@ -67,7 +68,7 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
             result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
     return result
 
-def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
+def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000, as_dict=False):
     ext_map = {
         '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
         '.go': 'go', '.rs': 'rs', '.rb': 'rb', '.java': 'java', '.kt': 'kt',
@@ -86,6 +87,32 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
                     '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
                     '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
     
+    if as_dict:
+        result_dict = {}
+        total = 0
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+            for f in sorted(files):
+                ext = os.path.splitext(f)[1].lower()
+                if f.endswith('.min.js') or f.endswith('.min.css'):
+                    continue
+                if ext not in snippet_exts:
+                    continue
+                fp = os.path.join(root, f)
+                try:
+                    content = Path(fp).read_text(encoding='utf-8', errors='replace')
+                    rel = os.path.relpath(fp, path)
+                    block_len = len(rel) + len(content) + 50
+                    if total + block_len > max_total:
+                        break
+                    result_dict[rel] = content.strip()
+                    total += block_len
+                except Exception:
+                    continue
+            if total >= max_total:
+                break
+        return result_dict
+
     result = ""
     total = 0
     for root, dirs, files in os.walk(path):
@@ -128,6 +155,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,54 +164,82 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
-    sections = []
-    sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    sections.append(f"Path: {target}")
-    sections.append("")
 
     # Git info
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
     remote = run(["git", "remote", "get-url", "origin"], target)
-    sections.append(f"## Git Info\n- Branch: `{branch}`")
-    sections.append(f"- Remote: {remote}")
     
     has_unstaged = run(["git", "diff", "--stat"], target)
     has_staged = run(["git", "diff", "--cached", "--stat"], target)
-    status = ""
-    if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
-    if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
-    if not has_unstaged and not has_staged:
-        status += "\n- Working tree: clean"
-    sections.append(status)
 
     # Recent commits
+    log = ""
     if args.log > 0:
         log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
                     "--pretty=format:%h %d %s (%an, %ar)"], target)
-        if log:
-            sections.append(f"\n## Recent Commits (last {args.log})")
-            sections.append(f"```\n{log}\n```")
 
     # Branch topology
     branches = run(["git", "branch", "-a"], target)
-    if branches:
-        sections.append("\n## Branches")
-        sections.append(f"```\n{branches}\n```")
 
     # Directory tree
     tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
-    sections.append(f"\n## Project Structure (depth={args.depth})")
-    sections.append(f"```\n{tree_out}\n```")
 
-    # File contents
-    if args.files:
-        contents = file_contents(target)
-        if contents:
-            sections.append("\n## File Contents")
-            sections.append(contents)
+    if args.json:
+        data = {
+            "repo_name": repo_name,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git_info": {
+                "branch": branch,
+                "remote": remote,
+                "status": {
+                    "unstaged": has_unstaged.split("\n") if has_unstaged else [],
+                    "staged": has_staged.split("\n") if has_staged else [],
+                    "clean": not has_unstaged and not has_staged
+                }
+            },
+            "recent_commits": [line.strip() for line in log.split("\n") if line.strip()] if args.log > 0 and log else [],
+            "branches": [b.strip() for b in branches.split("\n") if b.strip()] if branches else [],
+            "project_structure": [line.strip() for line in tree_out.split("\n") if line.strip()] if tree_out else []
+        }
+        if args.files:
+            data["files"] = file_contents(target, ignored=DEFAULT_IGNORE, as_dict=True)
+        output = json.dumps(data, indent=2)
+    else:
+        sections = []
+        sections.append(f"# git-context: {repo_name}")
+        sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        sections.append(f"Path: {target}")
+        sections.append("")
 
-    output = "\n".join(sections)
+        sections.append(f"## Git Info\n- Branch: `{branch}`")
+        sections.append(f"- Remote: {remote}")
+        
+        status = ""
+        if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
+        if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
+        if not has_unstaged and not has_staged:
+            status += "\n- Working tree: clean"
+        sections.append(status)
+
+        if args.log > 0 and log:
+            sections.append(f"\n## Recent Commits (last {args.log})")
+            sections.append(f"```\n{log}\n```")
+
+        if branches:
+            sections.append("\n## Branches")
+            sections.append(f"```\n{branches}\n```")
+
+        sections.append(f"\n## Project Structure (depth={args.depth})")
+        sections.append(f"```\n{tree_out}\n```")
+
+        if args.files:
+            contents = file_contents(target)
+            if contents:
+                sections.append("\n## File Contents")
+                sections.append(contents)
+
+        output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
