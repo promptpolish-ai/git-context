@@ -7,7 +7,7 @@ in one optimized prompt-ready block.
 Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
 """
 
-import argparse
+import argparse, json
 import os
 import subprocess
 import sys
@@ -128,6 +128,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -136,6 +137,22 @@ def main():
         sys.exit(1)
 
     repo_name = os.path.basename(target)
+    if args.json:
+        result = {"repo_name": repo_name, "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "path": target, "git_info": {"branch": branch, "remote": remote}}
+        if args.log > 0:
+            log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph", "--pretty=format:%h %d %s (%an, %ar)"], target)
+            if log: result["recent_commits"] = log.split("\n")
+        branches = run(["git", "branch", "-a"], target)
+        if branches: result["branches"] = branches.split("\n")
+        tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
+        result["project_structure"] = tree_out
+        if args.files:
+            contents = file_contents(target)
+            if contents: result["file_contents"] = contents
+        output = json.dumps(result, indent=2, ensure_ascii=False)
+        if args.output: Path(args.output).write_text(output); print(f"Written to {args.output}")
+        else: print(output)
+        return
     sections = []
     sections.append(f"# git-context: {repo_name}")
     sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
