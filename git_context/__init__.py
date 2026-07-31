@@ -4,7 +4,7 @@ git-context — Generate AI-friendly context for any git repo.
 Dump project structure, git log, file contents, and branch topology
 in one optimized prompt-ready block.
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
+Usage:  git context [--depth N] [--files] [--log N] [--json] [--output file] [--dir <path>]
 """
 
 import argparse
@@ -128,6 +128,7 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Output in JSON format')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
@@ -183,7 +184,37 @@ def main():
             sections.append("\n## File Contents")
             sections.append(contents)
 
-    output = "\n".join(sections)
+    if args.json:
+        import json as json_lib
+        data = {
+            "repo_name": repo_name,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+            },
+            "changes": {
+                "unstaged": bool(has_unstaged),
+                "staged": bool(has_staged),
+                "clean": not has_unstaged and not has_staged,
+            },
+        }
+        if args.log > 0 and log:
+            commits = []
+            for line in log.split('\n'):
+                line = line.strip()
+                if line:
+                    commits.append(line)
+            data["commits"] = commits
+        if branches:
+            data["branches"] = [b.strip() for b in branches.split('\n') if b.strip()]
+        data["tree"] = tree_out
+        if args.files and contents:
+            data["file_contents"] = contents
+        output = json_lib.dumps(data, indent=2)
+    else:
+        output = "\n".join(sections)
     
     if args.output:
         Path(args.output).write_text(output)
