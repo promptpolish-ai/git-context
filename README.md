@@ -27,6 +27,30 @@ python3 git-context --files -o context.txt
 python3 git-context --dir /path/to/repo
 ```
 
+## JSON output
+
+Use `--json` for machine-readable output. It also works with the Python module
+entry point and the existing `--files`, `--log`, `--depth`, and `--output` options:
+
+```bash
+python3 git-context --json
+python3 -m git_context --json --files --log 5 -o context.json
+```
+
+The JSON object contains `repo_name`, `generated`, `path`, `git_info`,
+`recent_commits`, `branches`, and `project_structure`. `git_info` contains
+`branch`, `remote`, `unstaged_changes`, and `staged_changes`. `branches` is a
+list of Git's displayed branch lines; the commit graph, diff statistics and
+project tree remain formatted strings. `--files` adds `file_contents`, using
+the same formatted snippets and size limit as Markdown output. With `--log 0`,
+`recent_commits` is an empty string.
+
+Without `--json`, output remains Markdown. With `--json --output`, the UTF-8
+JSON is written to the file and the confirmation goes to stderr, leaving
+stdout empty.
+
+Run the CLI regression tests with `python3 -m unittest discover -s tests -v`.
+
 ## Why $2?
 
 Because it saves you 5+ minutes every time you need to give context to an AI coding assistant. After 2-3 uses, it's paid for itself.
