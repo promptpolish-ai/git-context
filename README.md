@@ -25,6 +25,10 @@ python3 git-context --files -o context.txt
 
 # Any git repo, anywhere
 python3 git-context --dir /path/to/repo
+
+# Structured JSON for agents / automation
+python3 git-context --json
+python3 git-context --json --files -o context.json
 ```
 
 ## Why $2?
