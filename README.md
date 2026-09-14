@@ -23,6 +23,10 @@ python3 git-context --depth 2
 # Write to file instead of stdout
 python3 git-context --files -o context.txt
 
+# Emit machine-readable JSON (optionally with file contents)
+python3 git-context --json
+python3 git-context --json --files -o context.json
+
 # Any git repo, anywhere
 python3 git-context --dir /path/to/repo
 ```
