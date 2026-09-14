@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -127,8 +128,12 @@ def main():
     p.add_argument('--files', action='store_true', help='Include source file contents')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
+    p.add_argument('--json', action='store_true', help='Output machine-readable JSON')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
     args = p.parse_args()
+
+    if args.json and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
 
     target = os.path.abspath(args.dir)
     if not os.path.isdir(os.path.join(target, '.git')):
@@ -184,6 +189,25 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
+
+    if args.json:
+        json_output = {
+            "repo": repo_name,
+            "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "working_tree": "clean" if not has_unstaged and not has_staged else "dirty",
+                "unstaged": has_unstaged or None,
+                "staged": has_staged or None,
+            },
+            "recent_commits": log.splitlines() if args.log > 0 and log else [],
+            "branches": branches.splitlines() if branches else [],
+            "project_structure": tree_out,
+            "file_contents": contents if args.files else None,
+        }
+        output = json.dumps(json_output, ensure_ascii=False, indent=2)
     
     if args.output:
         Path(args.output).write_text(output)
