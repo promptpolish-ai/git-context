@@ -48,3 +48,13 @@ git-context --depth 2
 ## Support
 ETH: 0x1fca7781515a1bdb2950543b075d060489701424
 GitHub: https://github.com/promptpolish-ai/git-context
+
+
+### JSON output
+
+```bash
+git-context --json
+git-context --json -o context.json
+```
+
+Emits a structured JSON document instead of markdown. Useful for agents and scripts.
