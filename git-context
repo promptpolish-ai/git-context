@@ -1,195 +1,183 @@
-#!/usr/bin/env python3
-"""
-git-context — Generate AI-friendly context for any git repo.
-Dump project structure, git log, file contents, and branch topology
-in one optimized prompt-ready block.
+#!/bin/bash
 
-Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path>]
-"""
+# git-context: A tool to gather relevant git context for AI prompts.
+# Version: 0.1.0
 
-import argparse
-import os
-import subprocess
-import sys
-import fnmatch
-from pathlib import Path
-from datetime import datetime
+# --- Configuration ---
+MAX_DIFF_LINES=5000 # Maximum lines for the diff output
+MAX_COMMIT_MESSAGE_LINES=100 # Maximum lines for the commit message
+MAX_FILE_LIST_ITEMS=100 # Maximum items for file lists (staged, unstaged, untracked)
 
-DEFAULT_IGNORE = {
-    '.git', 'node_modules', '.next', 'dist', 'build', 'target',
-    '__pycache__', '.cache', 'venv', '.venv', '.env', 'env',
-    '.tox', '.eggs', '*.egg-info', '.pytest_cache', '.mypy_cache',
-    '.DS_Store', '.idea', '.vscode', '*.swp', '*.swo', '*~',
-    '*.pyc', '*.pyo', '.coverage', 'coverage', '*.log',
-    '.terraform', 'vendor', '.bundle',
+# --- Helper Functions ---
+
+# Function to escape JSON strings
+json_escape() {
+  local s="$1"
+  # Escape backslashes, double quotes, newlines, and carriage returns
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//
+/\\n}"
+  s="${s//\r/\\r}"
+  echo "$s"
 }
 
-def run(cmd, cwd=None):
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or os.getcwd(), timeout=10)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except Exception:
-        return ""
+# --- Main Logic ---
 
-def size_fmt(n):
-    if n > 1_000_000: return f"{n/1_000_000:.1f}MB"
-    if n > 1_000: return f"{n/1_000:.0f}KB"
-    return f"{n}B"
+# Check for --json flag
+JSON_OUTPUT=false
+for arg in "$@"; do
+  if [[ "$arg" == "--json" ]]; then
+    JSON_OUTPUT=true
+    break
+  fi
+done
 
-def should_ignore(name, ignored):
-    for pat in ignored:
-        if pat.startswith('*'):
-            if name.endswith(pat[1:]): return True
-        elif fnmatch.fnmatch(name, pat): return True
-    return False
+# If JSON output is requested, check for jq
+if $JSON_OUTPUT; then
+  if ! command -v jq &> /dev/null; then
+    echo "Error: 'jq' is required for --json output but is not installed." >&2
+    echo "Please install 'jq' (e.g., 'sudo apt-get install jq' or 'brew install jq')." >&2
+    exit 1
+  fi
+fi
 
-def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
-    if current_depth > depth:
-        return ""
-    items = []
-    try:
-        entries = sorted(os.listdir(path))
-    except PermissionError:
-        return ""
-    for e in entries:
-        fp = os.path.join(path, e)
-        if e.startswith('.') or should_ignore(e, ignored):
-            continue
-        is_dir = os.path.isdir(fp)
-        items.append((e, fp, is_dir))
-    result = ""
-    for i, (name, fp, is_dir) in enumerate(items):
-        is_last = i == len(items) - 1
-        conn = "└── " if is_last else "├── "
-        result += f"{prefix}{conn}{name}/\n" if is_dir else f"{prefix}{conn}{name}  ({size_fmt(os.path.getsize(fp))})\n"
-        if is_dir:
-            deeper = "    " if is_last else "│   "
-            result += tree(fp, prefix + deeper, ignored, depth, current_depth + 1)
-    return result
+# Get current branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ -z "$CURRENT_BRANCH" ]; then
+  CURRENT_BRANCH="N/A (detached HEAD or no commits)"
+fi
 
-def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
-    ext_map = {
-        '.py': 'py', '.js': 'js', '.ts': 'ts', '.tsx': 'tsx', '.jsx': 'jsx',
-        '.go': 'go', '.rs': 'rs', '.rb': 'rb', '.java': 'java', '.kt': 'kt',
-        '.swift': 'swift', '.c': 'c', '.h': 'h', '.cpp': 'cpp', '.hpp': 'hpp',
-        '.cs': 'cs', '.php': 'php', '.vue': 'vue', '.svelte': 'svelte',
-        '.css': 'css', '.scss': 'scss', '.html': 'html', '.xml': 'xml',
-        '.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml',
-        '.md': 'md', '.txt': 'txt', '.sh': 'sh', '.bash': 'sh', '.zsh': 'sh',
-        '.sql': 'sql', '.graphql': 'graphql', '.proto': 'proto',
-        '.dockerfile': 'dockerfile', '.tf': 'tf', '.env': 'env',
-        '.conf': 'conf', '.ini': 'ini', '.cfg': 'cfg',
-    }
-    snippet_exts = {'.py', '.js', '.ts', '.tsx', '.jsx', '.go', '.rs', '.rb',
-                    '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.cs', '.php',
-                    '.vue', '.svelte', '.css', '.scss', '.html', '.xml',
-                    '.json', '.yaml', '.yml', '.toml', '.md', '.sh', '.bash',
-                    '.zsh', '.sql', '.graphql', '.proto', '.tf', '.conf', '.ini'}
-    
-    result = ""
-    total = 0
-    for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
-        for f in sorted(files):
-            ext = os.path.splitext(f)[1].lower()
-            if f.endswith('.min.js') or f.endswith('.min.css'):
-                continue
-            if ext not in snippet_exts:
-                continue
-            fp = os.path.join(root, f)
-            try:
-                content = Path(fp).read_text(encoding='utf-8', errors='replace')
-                rel = os.path.relpath(fp, path)
-                block = f"\n--- {rel} ---\n```{ext_map.get(ext, '')}\n{content.strip()}\n```\n"
-                if total + len(block) > max_total:
-                    remaining = max_total - total
-                    result += block[:remaining] + f"\n... (truncated, more files in {rel})"
-                    total = max_total
-                    break
-                result += block
-                total += len(block)
-            except Exception:
-                continue
-        if total >= max_total:
-            break
-    return result
+# Get last commit hash
+LAST_COMMIT_HASH=$(git rev-parse HEAD 2>/dev/null)
+if [ -z "$LAST_COMMIT_HASH" ]; then
+  LAST_COMMIT_HASH="N/A"
+fi
 
-def fmt_timestamp(ts):
-    try:
-        dt = datetime.fromisoformat(ts)
-        return dt.strftime('%Y-%m-%d %H:%M')
-    except:
-        return ts[:19]
+# Get last commit message
+LAST_COMMIT_MESSAGE=$(git log -1 --pretty=%B 2>/dev/null | head -n "$MAX_COMMIT_MESSAGE_LINES")
+if [ -z "$LAST_COMMIT_MESSAGE" ]; then
+  LAST_COMMIT_MESSAGE="N/A"
+fi
 
-def main():
-    p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
-    p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
-    p.add_argument('--files', action='store_true', help='Include source file contents')
-    p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
-    p.add_argument('--output', '-o', help='Write to file instead of stdout')
-    p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
-    args = p.parse_args()
+# Get diff of staged changes
+STAGED_DIFF=$(git diff --cached --unified=3 2>/dev/null | head -n "$MAX_DIFF_LINES")
+if [ -z "$STAGED_DIFF" ]; then
+  STAGED_DIFF="No staged changes."
+fi
 
-    target = os.path.abspath(args.dir)
-    if not os.path.isdir(os.path.join(target, '.git')):
-        print(f"❌ Not a git repo: {target}", file=sys.stderr)
-        sys.exit(1)
+# Get diff of unstaged changes
+UNSTAGED_DIFF=$(git diff --unified=3 2>/dev/null | head -n "$MAX_DIFF_LINES")
+if [ -z "$UNSTAGED_DIFF" ]; then
+  UNSTAGED_DIFF="No unstaged changes."
+fi
 
-    repo_name = os.path.basename(target)
-    sections = []
-    sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    sections.append(f"Path: {target}")
-    sections.append("")
+# Get list of staged files
+STAGED_FILES_RAW=$(git diff --cached --name-only 2>/dev/null | head -n "$MAX_FILE_LIST_ITEMS")
+STAGED_FILES=()
+if [ -n "$STAGED_FILES_RAW" ]; then
+  while IFS= read -r line; do
+    STAGED_FILES+=("$(json_escape "$line")")
+  done <<< "$STAGED_FILES_RAW"
+fi
 
-    # Git info
-    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
-    remote = run(["git", "remote", "get-url", "origin"], target)
-    sections.append(f"## Git Info\n- Branch: `{branch}`")
-    sections.append(f"- Remote: {remote}")
-    
-    has_unstaged = run(["git", "diff", "--stat"], target)
-    has_staged = run(["git", "diff", "--cached", "--stat"], target)
-    status = ""
-    if has_unstaged: status += f"\n- Unstaged changes: {has_unstaged.split(chr(10))[-1]}"
-    if has_staged: status += f"\n- Staged changes: {has_staged.split(chr(10))[-1]}"
-    if not has_unstaged and not has_staged:
-        status += "\n- Working tree: clean"
-    sections.append(status)
+# Get list of unstaged files
+UNSTAGED_FILES_RAW=$(git diff --name-only 2>/dev/null | head -n "$MAX_FILE_LIST_ITEMS")
+UNSTAGED_FILES=()
+if [ -n "$UNSTAGED_FILES_RAW" ]; then
+  while IFS= read -r line; do
+    UNSTAGED_FILES+=("$(json_escape "$line")")
+  done <<< "$UNSTAGED_FILES_RAW"
+fi
 
-    # Recent commits
-    if args.log > 0:
-        log = run(["git", "log", f"--max-count={args.log}", "--oneline", "--graph",
-                    "--pretty=format:%h %d %s (%an, %ar)"], target)
-        if log:
-            sections.append(f"\n## Recent Commits (last {args.log})")
-            sections.append(f"```\n{log}\n```")
+# Get list of untracked files
+UNTRACKED_FILES_RAW=$(git ls-files --others --exclude-standard 2>/dev/null | head -n "$MAX_FILE_LIST_ITEMS")
+UNTRACKED_FILES=()
+if [ -n "$UNTRACKED_FILES_RAW" ]; then
+  while IFS= read -r line; do
+    UNTRACKED_FILES+=("$(json_escape "$line")")
+  done <<< "$UNTRACKED_FILES_RAW"
+fi
 
-    # Branch topology
-    branches = run(["git", "branch", "-a"], target)
-    if branches:
-        sections.append("\n## Branches")
-        sections.append(f"```\n{branches}\n```")
+# Get last tag and distance
+LAST_TAG_INFO=$(git describe --tags --abbrev=0 --long 2>/dev/null)
+LAST_TAG="N/A"
+LAST_TAG_DISTANCE="N/A"
+LAST_TAG_HASH="N/A"
 
-    # Directory tree
-    tree_out = tree(target, ignored=DEFAULT_IGNORE, depth=args.depth)
-    sections.append(f"\n## Project Structure (depth={args.depth})")
-    sections.append(f"```\n{tree_out}\n```")
+if [ -n "$LAST_TAG_INFO" ]; then
+  # Example: v1.0.0-5-gabcdef12
+  LAST_TAG=$(echo "$LAST_TAG_INFO" | sed -E 's/^(v[0-9]+\.[0-9]+\.[0-9]+).*$/\1/')
+  LAST_TAG_DISTANCE=$(echo "$LAST_TAG_INFO" | sed -E 's/^.*-([0-9]+)-g[0-9a-f]+$/\1/')
+  LAST_TAG_HASH=$(echo "$LAST_TAG_INFO" | sed -E 's/^.*-g([0-9a-f]+)$/\1/')
+fi
 
-    # File contents
-    if args.files:
-        contents = file_contents(target)
-        if contents:
-            sections.append("\n## File Contents")
-            sections.append(contents)
+# --- Output ---
 
-    output = "\n".join(sections)
-    
-    if args.output:
-        Path(args.output).write_text(output)
-        print(f"✅ Written to {args.output}")
-    else:
-        print(output)
-
-if __name__ == '__main__':
-    main()
+if $JSON_OUTPUT; then
+  # Construct JSON using jq
+  jq -n \
+    --arg branch "$(json_escape "$CURRENT_BRANCH")" \
+    --arg commit_hash "$(json_escape "$LAST_COMMIT_HASH")" \
+    --arg commit_message "$(json_escape "$LAST_COMMIT_MESSAGE")" \
+    --arg staged_diff "$(json_escape "$STAGED_DIFF")" \
+    --arg unstaged_diff "$(json_escape "$UNSTAGED_DIFF")" \
+    --argjson staged_files "$(printf '%s\n' "${STAGED_FILES[@]}" | jq -R . | jq -s .)" \
+    --argjson unstaged_files "$(printf '%s\n' "${UNSTAGED_FILES[@]}" | jq -R . | jq -s .)" \
+    --argjson untracked_files "$(printf '%s\n' "${UNTRACKED_FILES[@]}" | jq -R . | jq -s .)" \
+    --arg last_tag "$(json_escape "$LAST_TAG")" \
+    --arg last_tag_distance "$(json_escape "$LAST_TAG_DISTANCE")" \
+    --arg last_tag_hash "$(json_escape "$LAST_TAG_HASH")" \
+    '{
+      branch: $branch,
+      commit_hash: $commit_hash,
+      commit_message: $commit_message,
+      staged_diff: $staged_diff,
+      unstaged_diff: $unstaged_diff,
+      staged_files: $staged_files,
+      unstaged_files: $unstaged_files,
+      untracked_files: $untracked_files,
+      last_tag: $last_tag,
+      last_tag_distance: $last_tag_distance,
+      last_tag_hash: $last_tag_hash
+    }'
+else
+  # Original human-readable output
+  echo "--- Git Context ---"
+  echo "Branch: $CURRENT_BRANCH"
+  echo "Last Commit: $LAST_COMMIT_HASH"
+  echo "Last Commit Message:"
+  echo "$LAST_COMMIT_MESSAGE"
+  echo ""
+  echo "--- Staged Changes Diff ---"
+  echo "$STAGED_DIFF"
+  echo ""
+  echo "--- Unstaged Changes Diff ---"
+  echo "$UNSTAGED_DIFF"
+  echo ""
+  echo "--- Staged Files (${#STAGED_FILES[@]} items) ---"
+  if [ ${#STAGED_FILES[@]} -eq 0 ]; then
+    echo "No staged files."
+  else
+    printf '%s\n' "${STAGED_FILES[@]}"
+  fi
+  echo ""
+  echo "--- Unstaged Files (${#UNSTAGED_FILES[@]} items) ---"
+  if [ ${#UNSTAGED_FILES[@]} -eq 0 ]; then
+    echo "No unstaged files."
+  else
+    printf '%s\n' "${UNSTAGED_FILES[@]}"
+  fi
+  echo ""
+  echo "--- Untracked Files (${#UNTRACKED_FILES[@]} items) ---"
+  if [ ${#UNTRACKED_FILES[@]} -eq 0 ]; then
+    echo "No untracked files."
+  else
+    printf '%s\n' "${UNTRACKED_FILES[@]}"
+  fi
+  echo ""
+  echo "--- Last Tag Info ---"
+  echo "Last Tag: $LAST_TAG"
+  echo "Commits since last tag: $LAST_TAG_DISTANCE"
+  echo "Last Tag Commit Hash: $LAST_TAG_HASH"
+fi
