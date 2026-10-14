@@ -8,10 +8,12 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import fnmatch
+from urllib.parse import urlsplit, urlunsplit
 from pathlib import Path
 from datetime import datetime
 
@@ -30,6 +32,17 @@ def run(cmd, cwd=None):
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
         return ""
+
+def safe_remote(value):
+    # Context is commonly pasted into external tools: never include URL auth.
+    if '://' not in value:
+        return value
+    try:
+        parts = urlsplit(value)
+        host = parts.netloc.rsplit('@', 1)[-1]
+        return urlunsplit((parts.scheme, host, parts.path, '', ''))
+    except ValueError:
+        return '[remote URL omitted: invalid URL]'
 
 def size_fmt(n):
     if n > 1_000_000: return f"{n/1_000_000:.1f}MB"
@@ -53,7 +66,7 @@ def tree(path, prefix="", ignored=DEFAULT_IGNORE, depth=3, current_depth=0):
         return ""
     for e in entries:
         fp = os.path.join(path, e)
-        if e.startswith('.') or should_ignore(e, ignored):
+        if e.startswith('.') or should_ignore(e, ignored) or os.path.islink(fp):
             continue
         is_dir = os.path.isdir(fp)
         items.append((e, fp, is_dir))
@@ -89,8 +102,11 @@ def file_contents(path, ignored=DEFAULT_IGNORE, max_total=15000):
     result = ""
     total = 0
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ignored and d != 'node_modules']
+        dirs[:] = [d for d in dirs if not d.startswith('.') and not should_ignore(d, ignored) and not os.path.islink(os.path.join(root, d))]
         for f in sorted(files):
+            fp = os.path.join(root, f)
+            if f.startswith('.') or should_ignore(f, ignored) or os.path.islink(fp):
+                continue
             ext = os.path.splitext(f)[1].lower()
             if f.endswith('.min.js') or f.endswith('.min.css'):
                 continue
@@ -128,12 +144,38 @@ def main():
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
+    p.add_argument('--json', action='store_true', help='Emit machine-readable JSON instead of Markdown')
     args = p.parse_args()
 
     target = os.path.abspath(args.dir)
     if not os.path.isdir(os.path.join(target, '.git')):
         print(f"❌ Not a git repo: {target}", file=sys.stderr)
         sys.exit(1)
+
+    if args.json:
+        result = {
+            "repo_name": os.path.basename(target),
+            "generated": datetime.now().isoformat(timespec="seconds"),
+            "path": target,
+            "git": {
+                "branch": run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target),
+                "remote": safe_remote(run(["git", "remote", "get-url", "origin"], target)),
+                "unstaged": run(["git", "diff", "--stat"], target),
+                "staged": run(["git", "diff", "--cached", "--stat"], target),
+            },
+            "commits": run(["git", "log", f"--max-count={args.log}", "--oneline"], target).splitlines() if args.log > 0 else [],
+            "branches": run(["git", "branch", "-a"], target).splitlines(),
+            "tree": tree(target, ignored=DEFAULT_IGNORE, depth=args.depth),
+        }
+        if args.files:
+            result["files"] = file_contents(target)
+        output = json.dumps(result, ensure_ascii=False, indent=2)
+        if args.output:
+            Path(args.output).write_text(output + "\n", encoding="utf-8")
+            print(f"Written to {args.output}", file=sys.stderr)
+        else:
+            print(output)
+        return
 
     repo_name = os.path.basename(target)
     sections = []
@@ -144,7 +186,7 @@ def main():
 
     # Git info
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], target)
-    remote = run(["git", "remote", "get-url", "origin"], target)
+    remote = safe_remote(run(["git", "remote", "get-url", "origin"], target))
     sections.append(f"## Git Info\n- Branch: `{branch}`")
     sections.append(f"- Remote: {remote}")
     
