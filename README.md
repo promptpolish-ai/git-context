@@ -27,6 +27,24 @@ python3 git-context --files -o context.txt
 python3 git-context --dir /path/to/repo
 ```
 
+### JSON output
+
+Use `python3 git-context --json` (or `python3 -m git_context --json`) for a
+JSON object containing `repo_name`, `generated`, `path`, `git`, `recent_commits`,
+`branches` and `project_structure`. Each commit has a hash, author, ISO date
+and subject. The `git` object includes the current branch, remote and separate
+staged/unstaged diff summaries. The project tree remains a formatted string.
+
+`--json --files` also includes `file_contents`, using the existing formatted
+snippets and truncation limit. `--depth` and `--log` still apply; `--log 0`
+produces an empty commit list. To save UTF-8 JSON, use
+`python3 git-context --json --files -o context.json`. Without `--json`, the
+existing text output is retained. Invalid targets still report errors on stderr
+and exit with status 1.
+
+Run the integration tests with `python3 -m unittest discover -s tests -v`.
+They require Git, but no Python dependencies.
+
 ## Why $2?
 
 Because it saves you 5+ minutes every time you need to give context to an AI coding assistant. After 2-3 uses, it's paid for itself.

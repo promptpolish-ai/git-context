@@ -8,6 +8,7 @@ Usage:  git context [--depth N] [--files] [--log N] [--output file] [--dir <path
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -125,6 +126,7 @@ def main():
     p = argparse.ArgumentParser(description='Generate AI-friendly context for a git repo')
     p.add_argument('--depth', type=int, default=4, help='Directory tree depth (default: 4)')
     p.add_argument('--files', action='store_true', help='Include source file contents')
+    p.add_argument('--json', action='store_true', help='Emit structured JSON instead of text')
     p.add_argument('--log', type=int, default=20, help='Number of recent commits (default: 20, 0=skip)')
     p.add_argument('--output', '-o', help='Write to file instead of stdout')
     p.add_argument('--dir', default=os.getcwd(), help='Target directory (default: cwd)')
@@ -138,7 +140,8 @@ def main():
     repo_name = os.path.basename(target)
     sections = []
     sections.append(f"# git-context: {repo_name}")
-    sections.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    generated = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    sections.append(f"Generated: {generated}")
     sections.append(f"Path: {target}")
     sections.append("")
 
@@ -177,6 +180,7 @@ def main():
     sections.append(f"```\n{tree_out}\n```")
 
     # File contents
+    contents = ""
     if args.files:
         contents = file_contents(target)
         if contents:
@@ -184,9 +188,37 @@ def main():
             sections.append(contents)
 
     output = "\n".join(sections)
+    if args.json:
+        commits = []
+        if args.log > 0:
+            records = run(["git", "log", f"--max-count={args.log}",
+                           "--format=%H%x00%an%x00%aI%x00%s"], target)
+            for record in records.splitlines():
+                fields = record.split("\x00", 3)
+                if len(fields) == 4:
+                    commits.append(dict(zip(("hash", "author", "date", "subject"), fields)))
+        refs = run(["git", "for-each-ref", "--format=%(refname:short)",
+                    "refs/heads", "refs/remotes"], target)
+        context = {
+            "repo_name": repo_name,
+            "generated": generated,
+            "path": target,
+            "git": {
+                "branch": branch,
+                "remote": remote,
+                "unstaged_diff": has_unstaged,
+                "staged_diff": has_staged,
+            },
+            "recent_commits": commits,
+            "branches": refs.splitlines(),
+            "project_structure": tree_out,
+        }
+        if args.files:
+            context["file_contents"] = contents
+        output = json.dumps(context, ensure_ascii=False, indent=2)
     
     if args.output:
-        Path(args.output).write_text(output)
+        Path(args.output).write_text(output, encoding='utf-8')
         print(f"✅ Written to {args.output}")
     else:
         print(output)
